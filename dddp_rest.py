@@ -7,6 +7,7 @@ import threading
 import fcntl
 import time
 import json
+import logging
 try:
 	import re2 as re
 except ImportError:
@@ -18,9 +19,16 @@ from bottle import route, run
 MYPORT = 9131
 MYGROUP_4 = '239.255.250.250'
 
-NIC = 'wlan0'
+NIC = os.environ.get('DDDP_CLIENT_NIC', 'wlan0')
+
+if '--debug' in sys.argv[1:] or 'SERVER_DEBUG' in os.environ:
+	# Debug mode will enable more verbose output in the console window.
+	# It must be set at the beginning of the script.
+	import bottle
+	bottle.debug(True)
 
 registered_devices = {}
+log = logging.getLogger()
 
 TEST = b'AMXB<-UUID=GC100_000000000000_GCTestElement><-SDKClass=Utility><-Make=GlobalCache><-Model=GC-100-12><-Revision=1.0.0><Config-Name=GC-100><Config-URL=http://0.0.0.0>\r'
 
@@ -39,15 +47,13 @@ class DiscoveryBeaconRegistration(dict):
 	@staticmethod
 	def parseBeaconData(beaconData):
 		result = re.match(DiscoveryBeaconRegistration.REGEX, beaconData.decode("utf-8"))
-		print(str(result))
-
-		print(result.group('UUID'))
-		print(result.group('Make'))
-		print(result.group('Model'))
-		print(result.group('Revision'))
-		print(result.group('ConfigName'))
-		print(result.group('ConfigURL'))
-		
+		log.debug(str(result))
+		log.debug(result.group('UUID'))
+		log.debug(result.group('Make'))
+		log.debug(result.group('Model'))
+		log.debug(result.group('Revision'))
+		log.debug(result.group('ConfigName'))
+		log.debug(result.group('ConfigURL'))
 
 		reg = DiscoveryBeaconRegistration (result.group('UUID'), result.group('Make'), result.group('Model'), result.group('Revision'), result.group('ConfigName'), result.group('ConfigURL'))
 		return reg
@@ -63,22 +69,19 @@ def DiscoveredBeaconsPrinter():
 	while True:
 		time.sleep(5)
 		for key in registered_devices:
-			print(key, 'value = ', registered_devices[key])
+			log.info(key, 'value = ', registered_devices[key])
 
 def DiscoveryBeaconRegistrationListener():
 	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-	#try:
 	s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-	#except AttributeError:
-		#pass    
-
+	
 	s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 32) 
 	s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)	
 
 	s.bind(('', MYPORT))
 
 	host = get_ip_address(NIC)
-	print(host)
+	log.info(host)
 	s.setsockopt(socket.SOL_IP, socket.IP_MULTICAST_IF, socket.inet_aton(host))
 	s.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton(MYGROUP_4) + socket.inet_aton(host))
 
@@ -86,16 +89,12 @@ def DiscoveryBeaconRegistrationListener():
 	while True:
 		try:
 			data, addr=s.recvfrom(256)
-			print('Got data')
-			print(data)
+			log.info('Got data: ', data)
 			d = DiscoveryBeaconRegistration.parseBeaconData(data)
 			registered_devices[d['UUID']] = d #Register the device or simply update its last heartbeat
 		except Exception as e:
-			print('Error parsing broadcast packet')
-			print(data)
-			print(addr)
-			print(str(e))
-			#print(exc_info())
+			log.error('Error parsing packet: ', data, ' from: ', addr)
+			log.error(str(e))
 	sock.close()
 
 @route('/gc/devices', method='GET')
